@@ -1,0 +1,120 @@
+# CANONICAL COPY. Published one-way to flowharness-ai/vibe-check-action (marketplace).
+# Any change here must be re-exported there and the v1 tag moved.
+name: "FlowHarness Vibe Check"
+description: >-
+  Render the CI-PR6b/6c governance run as a sticky PR comment (Base/PR/Δ/Verdict over the four
+  §2.5 axes) and propagate the verdict exit code. The comment is created-or-updated by a hidden
+  `<!-- flowharness-vibe-check -->` marker, so re-pushes edit ONE comment instead of spamming.
+  A comment-post failure is non-fatal (S4); fork PRs degrade to the step summary + one fixed-text
+  `::notice`. §CI-PR7 Step 2.
+
+inputs:
+  base:
+    description: "git ref to diff HEAD against (needs fetch-depth: 0 on checkout)."
+    required: false
+    default: "origin/main"
+  executor:
+    description: "replay (offline, the only wired mode); live lands CI-PR9."
+    required: false
+    default: "replay"
+  suite:
+    # Pinned here AND passed explicitly so the action's surface can never drift out of the
+    # derived S6 governance matcher (D-CI7-23).
+    description: "path to the committed suite lockfile."
+    required: false
+    default: ".flowharness/suite.lock.json"
+  gate-policy:
+    description: "path to the committed gate policy."
+    required: false
+    default: ".flowharness/gate-policy.toml"
+  upload:
+    # Tier 1 opt-in (CI-PR8). NO token/URL input here on purpose: FLOWHARNESS_TOKEN /
+    # FLOWHARNESS_API_URL are scoped to the INVOKING step's env: (never `with:`, never job env --
+    # D-CI8-9). Consumer story: `upload: ${{ secrets.FLOWHARNESS_TOKEN != '' }}`.
+    description: "POST the signed run when 'true' (needs FLOWHARNESS_TOKEN in the step env; Tier 0 otherwise)."
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    # Third-party action SHA-pinned (S7, CI-PR5 by reference); version in the trailing comment.
+    # setup-uv installs ONLY the uv/uvx binaries -- never this package's console script -- so
+    # every CLI step below runs `uvx --from flowharness-ci-runner flowharness-ci ...`, the
+    # spec 2.7 fetch-and-run form (D-CI7-30). `--from` because the DISTRIBUTION name
+    # (flowharness-ci-runner, pyproject [project].name) differs from the SCRIPT name
+    # (flowharness-ci, [project.scripts]): a bare `uvx flowharness-ci` would resolve the wrong
+    # package. PUBLICATION DEPENDENCY: flowharness-ci-runner must be on PyPI for uvx to
+    # resolve it; pin `--from flowharness-ci-runner==X.Y.Z` at first publication.
+    - name: Set up uv
+      uses: astral-sh/setup-uv@f94ec6bedd8674c4426838e6b50417d36b6ab231 # v5
+
+    # Capture the verdict, NEVER let `-e` kill the step: the composite default shell is
+    # `bash --noprofile --norc -e -o pipefail`, under which a bare `vibe-check ... > body`
+    # exits 1/2 on NEEDS_HUMAN/FAIL and the step dies with no summary, no comment, no notice
+    # (MEASURED, D-CI7-20). `|| code=$?` keeps the value; `$GITHUB_ENV` carries it across steps
+    # (a plain shell var does NOT survive -- each `run:` is its own shell).
+    - name: Vibe check (capture verdict + body)
+      shell: bash
+      env:
+        BASE: ${{ inputs.base }}
+        EXECUTOR: ${{ inputs.executor }}
+        SUITE: ${{ inputs.suite }}
+        GATE_POLICY: ${{ inputs.gate-policy }}
+        UPLOAD: ${{ inputs.upload }}
+        BODY: ${{ runner.temp }}/flowharness-vibe-body.md
+      run: |
+        code=0
+        # Append --upload ONLY when the input is the string "true" (CI-PR8). `$UPLOAD` reaches the
+        # shell via the env block above -- the input is never expanded as a workflow expression
+        # inside this run body (the injection defense). The token/URL are NOT set here: they come
+        # from the invoking step's env, which the composite's child processes inherit (D-CI8-9). The
+        # `if` guard is `-e`-safe (the test after `if` is exempt); an unquoted empty `$UPLOAD_FLAG`
+        # drops the argument cleanly.
+        UPLOAD_FLAG=""
+        if [ "$UPLOAD" = "true" ]; then
+          UPLOAD_FLAG="--upload"
+        fi
+        uvx --from flowharness-ci-runner==0.1.1 flowharness-ci vibe-check --format github \
+          --base "$BASE" --executor "$EXECUTOR" \
+          --suite "$SUITE" --gate-policy "$GATE_POLICY" $UPLOAD_FLAG > "$BODY" || code=$?
+        echo "VIBE_CODE=$code" >> "$GITHUB_ENV"
+
+    # Always surface the body (S4): the report reaches a human even if the comment post fails.
+    # `:-/dev/null` keeps this a no-op when the summary is unset (e.g. `act` local runs).
+    - name: Append body to the step summary
+      shell: bash
+      env:
+        BODY: ${{ runner.temp }}/flowharness-vibe-body.md
+      run: |
+        cat "$BODY" >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+
+    # Sticky comment on same-repo PRs only: fork PRs have no write token (S4 is structural).
+    # `|| true` so a post failure NEVER changes the job's exit code.
+    - name: Post sticky comment (same-repo PRs)
+      if: github.event.pull_request.head.repo.fork == false
+      shell: bash
+      env:
+        BODY: ${{ runner.temp }}/flowharness-vibe-body.md
+        PR: ${{ github.event.pull_request.number }}
+        # gh sources its credential from env; Python never reads it (T7). Without this, a
+        # consumer repo with no ambient workflow-level GITHUB_TOKEN silently loses the comment
+        # (post_sticky_comment -> DEGRADED, exit 0). Step env, never a `with:` input (D-CI8-9).
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        uvx --from flowharness-ci-runner==0.1.1 flowharness-ci post-comment --body-file "$BODY" --pr "$PR" || true
+
+    # The S4 "+ annotations" half (D-CI7-10): fork PRs get one FIXED-TEXT notice, token-free,
+    # zero branching, zero untrusted content -- the CLI itself still emits no workflow commands.
+    - name: Fork degradation notice
+      if: github.event.pull_request.head.repo.fork == true
+      shell: bash
+      run: |
+        echo "::notice title=FlowHarness Vibe Check::full report in the step summary"
+
+    # Propagate the captured verdict. Fail CLOSED (2 == FAIL) if the env hand-off is ever broken,
+    # so a lost verdict can never read as a PASS (D-CI7-20).
+    - name: Propagate verdict
+      shell: bash
+      run: |
+        exit "${VIBE_CODE:-2}"
