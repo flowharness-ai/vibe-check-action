@@ -125,8 +125,9 @@ commit SHA and SHA-pin every third-party Action according to their policy.
 - **Versions differ.** The Action's embedded runner is 0.1.1, while the local released setup is
   0.1.2; use the version matrix above to choose the surface you are debugging.
 
-Read the [public Vibe Check guide](https://flowharness.ai/go/vibe-check) for setup and privacy
-details, and browse the [Vibe Check Action source](https://github.com/flowharness-ai/vibe-check-action).
+For setup, read the [public Vibe Check guide](https://github.com/flowharness-ai/flowharness/blob/main/docs/vibe-check.md).
+For permissions, tokens, and data handling, read the [privacy guide](https://github.com/flowharness-ai/flowharness/blob/main/docs/privacy-permissions-and-tokens.md).
+Browse the [Vibe Check Action source](https://github.com/flowharness-ai/vibe-check-action).
 
 ## From one repository to organizational governance
 
