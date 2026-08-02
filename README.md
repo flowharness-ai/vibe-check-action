@@ -113,6 +113,12 @@ Action's embedded runtime. Major Action tags make the example easy to adopt. Org
 require immutable supply-chain inputs should replace `@v1` with the relevant immutable release
 commit SHA and SHA-pin every third-party Action according to their policy.
 
+**Important:** This public repository is the reviewed release/export surface for the Vibe Check
+composite Action. Public users should rely on this repository and a reviewed release tag or commit
+for the Action they invoke. The released Python source for its runner is the
+`flowharness-ci-runner` PyPI sdist. This repository does not make the commercial FlowHarness
+platform source available.
+
 ## Troubleshooting and public guides
 
 - **The Action cannot determine a base.** Confirm `fetch-depth: 0`, committed replay fixtures, the
