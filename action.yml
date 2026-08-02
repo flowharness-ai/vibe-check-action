@@ -1,5 +1,6 @@
 # CANONICAL COPY. Published one-way to flowharness-ai/vibe-check-action (marketplace).
-# Any change here must be re-exported there and the v1 tag moved.
+# Any change here must be re-exported there and the v1 tag moved (release checklist:
+# agent-plans/2026-07-29-highest-value-now-plan.md Task B5).
 name: "FlowHarness Vibe Check"
 description: >-
   Render the CI-PR6b/6c governance run as a sticky PR comment (Base/PR/Δ/Verdict over the four
@@ -40,12 +41,14 @@ runs:
   steps:
     # Third-party action SHA-pinned (S7, CI-PR5 by reference); version in the trailing comment.
     # setup-uv installs ONLY the uv/uvx binaries -- never this package's console script -- so
-    # every CLI step below runs `uvx --from flowharness-ci-runner flowharness-ci ...`, the
-    # spec 2.7 fetch-and-run form (D-CI7-30). `--from` because the DISTRIBUTION name
+    # every CLI step below runs `uvx --no-config --no-sources --from
+    # flowharness-ci-runner==0.1.1 flowharness-ci ...`, the spec 2.7 fetch-and-run form
+    # (D-CI7-30). `--from` because the DISTRIBUTION name
     # (flowharness-ci-runner, pyproject [project].name) differs from the SCRIPT name
     # (flowharness-ci, [project.scripts]): a bare `uvx flowharness-ci` would resolve the wrong
     # package. PUBLICATION DEPENDENCY: flowharness-ci-runner must be on PyPI for uvx to
-    # resolve it; pin `--from flowharness-ci-runner==X.Y.Z` at first publication.
+    # resolve it; the exact 0.1.1 pin and `--no-config --no-sources` prevent persistent
+    # user/system uv configuration from changing the resolved package.
     - name: Set up uv
       uses: astral-sh/setup-uv@f94ec6bedd8674c4426838e6b50417d36b6ab231 # v5
 
@@ -75,7 +78,7 @@ runs:
         if [ "$UPLOAD" = "true" ]; then
           UPLOAD_FLAG="--upload"
         fi
-        uvx --from flowharness-ci-runner==0.1.1 flowharness-ci vibe-check --format github \
+        uvx --no-config --no-sources --from flowharness-ci-runner==0.1.1 flowharness-ci vibe-check --format github \
           --base "$BASE" --executor "$EXECUTOR" \
           --suite "$SUITE" --gate-policy "$GATE_POLICY" $UPLOAD_FLAG > "$BODY" || code=$?
         echo "VIBE_CODE=$code" >> "$GITHUB_ENV"
@@ -102,7 +105,7 @@ runs:
         # (post_sticky_comment -> DEGRADED, exit 0). Step env, never a `with:` input (D-CI8-9).
         GH_TOKEN: ${{ github.token }}
       run: |
-        uvx --from flowharness-ci-runner==0.1.1 flowharness-ci post-comment --body-file "$BODY" --pr "$PR" || true
+        uvx --no-config --no-sources --from flowharness-ci-runner==0.1.1 flowharness-ci post-comment --body-file "$BODY" --pr "$PR" || true
 
     # The S4 "+ annotations" half (D-CI7-10): fork PRs get one FIXED-TEXT notice, token-free,
     # zero branching, zero untrusted content -- the CLI itself still emits no workflow commands.
