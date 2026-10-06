@@ -1,13 +1,12 @@
 # CANONICAL COPY. Published one-way to flowharness-ai/vibe-check-action (marketplace).
-# Any change here must be re-exported there and the v1 tag moved (release checklist:
-# agent-plans/2026-07-29-highest-value-now-plan.md Task B5).
+# Any change here must be re-exported there and the v1 tag moved.
 name: "FlowHarness Vibe Check"
 description: >-
-  Render the CI-PR6b/6c governance run as a sticky PR comment (Base/PR/Δ/Verdict over the four
-  §2.5 axes) and propagate the verdict exit code. The comment is created-or-updated by a hidden
+  Render the FlowHarness governance run as a sticky PR comment (Base/PR/Δ/Verdict over four
+  axes) and propagate the verdict exit code. The comment is created-or-updated by a hidden
   `<!-- flowharness-vibe-check -->` marker, so re-pushes edit ONE comment instead of spamming.
-  A comment-post failure is non-fatal (S4); fork PRs degrade to the step summary + one fixed-text
-  `::notice`. §CI-PR7 Step 2.
+  A comment-post failure is non-fatal; fork PRs degrade to the step summary + one fixed-text
+  `::notice`.
 
 inputs:
   base:
@@ -15,12 +14,12 @@ inputs:
     required: false
     default: "origin/main"
   executor:
-    description: "replay (offline, the only wired mode); live lands CI-PR9."
+    description: "replay (offline, the only wired mode)."
     required: false
     default: "replay"
   suite:
     # Pinned here AND passed explicitly so the action's surface can never drift out of the
-    # derived S6 governance matcher (D-CI7-23).
+    # derived governance-file matcher.
     description: "path to the committed suite lockfile."
     required: false
     default: ".flowharness/suite.lock.json"
@@ -29,33 +28,86 @@ inputs:
     required: false
     default: ".flowharness/gate-policy.toml"
   upload:
-    # Tier 1 opt-in (CI-PR8). NO token/URL input here on purpose: FLOWHARNESS_TOKEN /
-    # FLOWHARNESS_API_URL are scoped to the INVOKING step's env: (never `with:`, never job env --
-    # D-CI8-9). Consumer story: `upload: ${{ secrets.FLOWHARNESS_TOKEN != '' }}`.
+    # Signed upload is opt-in. NO token/URL input here on purpose: FLOWHARNESS_TOKEN /
+    # FLOWHARNESS_API_URL are scoped to the INVOKING step's env: (never `with:`, never job env).
+    # Consumer story: `upload: ${{ secrets.FLOWHARNESS_TOKEN != '' }}`.
     description: "POST the signed run when 'true' (needs FLOWHARNESS_TOKEN in the step env; Tier 0 otherwise)."
     required: false
     default: "false"
+  # The three inputs below map to CLI flags that the pinned 0.3.0 runner knows. Each one
+  # adds its flag ONLY when it departs from the CLI default, so the defaults assemble the argv the
+  # action assembled before these inputs existed.
+  external-findings:
+    # Comma list of scanner artifacts passed through to `vibe-check --external-findings`
+    # ONLY when non-empty: the CLI refuses an empty list (typed exit 2), so an unset input
+    # must drop the flag entirely. The SkillSpector SARIF below joins this list when enabled.
+    description: "comma-separated SARIF/JSON findings files gated through the [external] policy section."
+    required: false
+    default: ""
+  history-hint:
+    # The CLI default is already on (token-gated inside); ONLY the exact string 'false'
+    # emits --no-history -- a typo ('True', 'yes') keeps the default-ON feature on, the
+    # fail-safe polarity.
+    description: "history hint block; 'false' passes --no-history."
+    required: false
+    default: "true"
+  seed-check:
+    # warn | off -- zero-case runs append the seed hint block; 'off' suppresses it. YAML 1.1
+    # parses an unquoted `off` as boolean false, so the shell treats 'off' AND 'false' as
+    # off; quoting "off" also works.
+    description: "warn | off — append the 'run flowharness-ci seed' hint block on zero-case suites."
+    required: false
+    default: "warn"
+  # Opt-in third-party scan. Only the exact string
+  # 'true' turns it on. The SARIF goes through `--external-findings` and the `[external]` policy.
+  skillspector:
+    description: "'true' runs NVIDIA SkillSpector (static, no LLM) on skillspector-path and gates its SARIF via [external]."
+    required: false
+    default: "false"
+  skillspector-path:
+    description: "directory of agent skills that SkillSpector scans (recursive)."
+    required: false
+    default: ".claude/skills"
 
 runs:
   using: composite
   steps:
-    # Third-party action SHA-pinned (S7, CI-PR5 by reference); version in the trailing comment.
+    # Third-party action SHA-pinned; version in the trailing comment.
     # setup-uv installs ONLY the uv/uvx binaries -- never this package's console script -- so
     # every CLI step below runs `uvx --no-config --no-sources --from
-    # flowharness-ci-runner==0.1.1 flowharness-ci ...`, the spec 2.7 fetch-and-run form
-    # (D-CI7-30). `--from` because the DISTRIBUTION name
+    # flowharness-ci-runner==0.3.0 flowharness-ci ...`, the fetch-and-run form.
+    # `--from` because the DISTRIBUTION name
     # (flowharness-ci-runner, pyproject [project].name) differs from the SCRIPT name
     # (flowharness-ci, [project.scripts]): a bare `uvx flowharness-ci` would resolve the wrong
     # package. PUBLICATION DEPENDENCY: flowharness-ci-runner must be on PyPI for uvx to
-    # resolve it; the exact 0.1.1 pin and `--no-config --no-sources` prevent persistent
+    # resolve it; the exact 0.3.0 pin and `--no-config --no-sources` prevent persistent
     # user/system uv configuration from changing the resolved package.
     - name: Set up uv
       uses: astral-sh/setup-uv@f94ec6bedd8674c4426838e6b50417d36b6ab231 # v5
 
+    # SkillSpector is Alpha and not on PyPI, so the step pins a COMMIT (00c2d990 = upstream #621,
+    # the first with `security-severity` and the `uriBaseId` chain). Only the commit is pinned: its
+    # dependencies resolve fresh on each run. `--no-llm` keeps the skill content on the runner:
+    # this step inherits the invoking step's env, and with an NVIDIA_INFERENCE_KEY there a plain
+    # scan sends each skill to NVIDIA Build. SkillSpector writes the SARIF and THEN exits 1 on a
+    # high risk score or an incomplete run (2 = execution failed). `|| rc=$?` keeps that exit from
+    # ending the job under `-e`: the FlowHarness gate reads the SARIF and decides. If no
+    # SARIF exists, the vibe step gets a missing path and the CLI refuses it (typed exit 2, FAIL).
+    - name: SkillSpector scan (opt-in)
+      if: inputs.skillspector == 'true'
+      shell: bash
+      env:
+        SKILLSPECTOR_PATH: ${{ inputs.skillspector-path }}
+        SARIF: ${{ runner.temp }}/flowharness-skillspector.sarif
+      run: |
+        rc=0
+        uvx --no-config --no-sources --from git+https://github.com/NVIDIA/skillspector.git@00c2d990cc9f01ba9d69708236c38b6a950bb547 skillspector scan "$SKILLSPECTOR_PATH" --recursive --no-llm --fail-on-incomplete -f sarif -o "$SARIF" || rc=$?
+        echo "SkillSpector exit code $rc; the FlowHarness gate decides from the SARIF."
+
     # Capture the verdict, NEVER let `-e` kill the step: the composite default shell is
     # `bash --noprofile --norc -e -o pipefail`, under which a bare `vibe-check ... > body`
     # exits 1/2 on NEEDS_HUMAN/FAIL and the step dies with no summary, no comment, no notice
-    # (MEASURED, D-CI7-20). `|| code=$?` keeps the value; `$GITHUB_ENV` carries it across steps
+    # (measured). `|| code=$?` keeps the value; `$GITHUB_ENV` carries it across steps
     # (a plain shell var does NOT survive -- each `run:` is its own shell).
     - name: Vibe check (capture verdict + body)
       shell: bash
@@ -65,25 +117,55 @@ runs:
         SUITE: ${{ inputs.suite }}
         GATE_POLICY: ${{ inputs.gate-policy }}
         UPLOAD: ${{ inputs.upload }}
+        EXTERNAL_FINDINGS: ${{ inputs.external-findings }}
+        HISTORY_HINT: ${{ inputs.history-hint }}
+        SEED_CHECK: ${{ inputs.seed-check }}
+        # The same switch and path as the SkillSpector step, on THIS step's env: never
+        # `$GITHUB_ENV`, which leaks into later consumer steps and lets a job variable add a path.
+        SKILLSPECTOR: ${{ inputs.skillspector }}
+        SKILLSPECTOR_SARIF: ${{ runner.temp }}/flowharness-skillspector.sarif
         BODY: ${{ runner.temp }}/flowharness-vibe-body.md
       run: |
         code=0
-        # Append --upload ONLY when the input is the string "true" (CI-PR8). `$UPLOAD` reaches the
+        # Append --upload ONLY when the input is the string "true". `$UPLOAD` reaches the
         # shell via the env block above -- the input is never expanded as a workflow expression
         # inside this run body (the injection defense). The token/URL are NOT set here: they come
-        # from the invoking step's env, which the composite's child processes inherit (D-CI8-9). The
+        # from the invoking step's env, which the composite's child processes inherit. The
         # `if` guard is `-e`-safe (the test after `if` is exempt); an unquoted empty `$UPLOAD_FLAG`
         # drops the argument cleanly.
         UPLOAD_FLAG=""
         if [ "$UPLOAD" = "true" ]; then
           UPLOAD_FLAG="--upload"
         fi
-        uvx --no-config --no-sources --from flowharness-ci-runner==0.1.1 flowharness-ci vibe-check --format github \
+        # The three optional CLI-flag inputs. Each one maps to its flag ONLY when it departs from the
+        # CLI's own default, so a defaults-only run assembles the argv it assembled before this
+        # unit, and an existing consumer sees no change when the pin moves. `EXTERNAL_ARGS` is an
+        # ARRAY so a findings path containing a space stays ONE argv word. The composite shell has
+        # no `-u`, so `"${arr[@]}"` on an empty array expands to zero words; the action's tests
+        # run these bodies under that shell and record the argv the CLI receives.
+        FINDINGS="$EXTERNAL_FINDINGS"
+        if [ "$SKILLSPECTOR" = "true" ]; then
+          FINDINGS="${FINDINGS:+$FINDINGS,}$SKILLSPECTOR_SARIF"
+        fi
+        EXTERNAL_ARGS=()
+        if [ -n "$FINDINGS" ]; then
+          EXTERNAL_ARGS=(--external-findings "$FINDINGS")
+        fi
+        HISTORY_FLAG=""
+        if [ "$HISTORY_HINT" = "false" ]; then
+          HISTORY_FLAG="--no-history"
+        fi
+        SEED_CHECK_ARGS=()
+        if [ "$SEED_CHECK" = "off" ] || [ "$SEED_CHECK" = "false" ]; then
+          SEED_CHECK_ARGS=(--seed-check off)
+        fi
+        uvx --no-config --no-sources --from flowharness-ci-runner==0.3.0 flowharness-ci vibe-check --format github \
           --base "$BASE" --executor "$EXECUTOR" \
-          --suite "$SUITE" --gate-policy "$GATE_POLICY" $UPLOAD_FLAG > "$BODY" || code=$?
+          --suite "$SUITE" --gate-policy "$GATE_POLICY" $UPLOAD_FLAG \
+          "${EXTERNAL_ARGS[@]}" $HISTORY_FLAG "${SEED_CHECK_ARGS[@]}" > "$BODY" || code=$?
         echo "VIBE_CODE=$code" >> "$GITHUB_ENV"
 
-    # Always surface the body (S4): the report reaches a human even if the comment post fails.
+    # Always surface the body: the report reaches a human even if the comment post fails.
     # `:-/dev/null` keeps this a no-op when the summary is unset (e.g. `act` local runs).
     - name: Append body to the step summary
       shell: bash
@@ -92,7 +174,7 @@ runs:
       run: |
         cat "$BODY" >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
 
-    # Sticky comment on same-repo PRs only: fork PRs have no write token (S4 is structural).
+    # Sticky comment on same-repo PRs only: fork PRs have no write token.
     # `|| true` so a post failure NEVER changes the job's exit code.
     - name: Post sticky comment (same-repo PRs)
       if: github.event.pull_request.head.repo.fork == false
@@ -100,14 +182,14 @@ runs:
       env:
         BODY: ${{ runner.temp }}/flowharness-vibe-body.md
         PR: ${{ github.event.pull_request.number }}
-        # gh sources its credential from env; Python never reads it (T7). Without this, a
-        # consumer repo with no ambient workflow-level GITHUB_TOKEN silently loses the comment
-        # (post_sticky_comment -> DEGRADED, exit 0). Step env, never a `with:` input (D-CI8-9).
+        # gh sources its credential from env; Python never reads it. Without this, a consumer
+        # repo with no ambient workflow-level GITHUB_TOKEN silently loses the comment (the post
+        # degrades and exits 0). Step env, never a `with:` input.
         GH_TOKEN: ${{ github.token }}
       run: |
-        uvx --no-config --no-sources --from flowharness-ci-runner==0.1.1 flowharness-ci post-comment --body-file "$BODY" --pr "$PR" || true
+        uvx --no-config --no-sources --from flowharness-ci-runner==0.3.0 flowharness-ci post-comment --body-file "$BODY" --pr "$PR" || true
 
-    # The S4 "+ annotations" half (D-CI7-10): fork PRs get one FIXED-TEXT notice, token-free,
+    # Fork PRs get one FIXED-TEXT notice, token-free,
     # zero branching, zero untrusted content -- the CLI itself still emits no workflow commands.
     - name: Fork degradation notice
       if: github.event.pull_request.head.repo.fork == true
@@ -116,7 +198,7 @@ runs:
         echo "::notice title=FlowHarness Vibe Check::full report in the step summary"
 
     # Propagate the captured verdict. Fail CLOSED (2 == FAIL) if the env hand-off is ever broken,
-    # so a lost verdict can never read as a PASS (D-CI7-20).
+    # so a lost verdict can never read as a PASS.
     - name: Propagate verdict
       shell: bash
       run: |

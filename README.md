@@ -20,7 +20,7 @@ uvx --no-config --no-sources --from flowharness==0.1.2 \
 Then generate starter replay cases, the suite lockfile, and the starter gate policy:
 
 ```console
-uvx --no-config --no-sources --from flowharness-ci-runner==0.1.2 \
+uvx --no-config --no-sources --from flowharness-ci-runner==0.3.0 \
   flowharness-ci seed
 ```
 
@@ -32,7 +32,7 @@ case fixtures, and full Git history so the runner can resolve the merge base.
 To exercise the released local runner before opening a pull request:
 
 ```console
-uvx --no-config --no-sources --from flowharness-ci-runner==0.1.2 \
+uvx --no-config --no-sources --from flowharness-ci-runner==0.3.0 \
   flowharness-ci vibe-check --base origin/main --executor replay
 ```
 
@@ -79,6 +79,39 @@ The workflow intentionally grants only `contents: read` and `pull-requests: writ
 `pull_request` trigger and must not be changed to `pull_request_target` to regain write access or
 secrets while evaluating untrusted pull-request content.
 
+## Optional inputs
+
+All inputs are optional. With the defaults, the Action passes the same arguments to the runner as v1.0.1.
+
+| Input | Default | Effect |
+| --- | --- | --- |
+| `external-findings` | `""` | Comma-separated SARIF or JSON reports from other scanners, gated through the `[external]` section of the gate policy. |
+| `history-hint` | `"true"` | Only the exact string `false` turns off the history hint block. |
+| `seed-check` | `"warn"` | `off` removes the "run `flowharness-ci seed`" hint on a suite with zero cases. Quote it: YAML reads a bare `off` as a boolean. |
+| `skillspector` | `"false"` | Only the exact string `true` runs NVIDIA SkillSpector on `skillspector-path` and gates its findings. |
+| `skillspector-path` | `.claude/skills` | The directory of agent skills that SkillSpector scans, recursively. |
+
+### Gate SkillSpector findings
+
+```yaml
+- uses: flowharness-ai/vibe-check-action@v1
+  with:
+    executor: replay
+    skillspector: "true"
+```
+
+[NVIDIA SkillSpector](https://github.com/NVIDIA/SkillSpector) is an open-source security scanner
+for agent skills. The Action runs it from a pinned upstream commit, always with `--no-llm`, so
+skill content goes to no model provider. Only the commit is pinned; SkillSpector's dependencies
+resolve when the step runs, and its dependency checks query [OSV.dev](https://osv.dev).
+
+SkillSpector exits non-zero on a high risk score. The Action keeps that exit code out of the job
+result: the FlowHarness verdict decides from the SARIF report, and the comment shows a
+"Third-party checks" row for `skillspector`. A partial analysis adds one
+`external.skillspector.analysis_incomplete` finding, which needs a human by default. Findings that
+a SkillSpector baseline suppresses are counted and still gate, unless the gate policy sets
+`honor_suppressions = true` in `[external]`. If no report is written, the job fails closed.
+
 ## Forks, tokens, and optional upload
 
 Fork pull requests do not receive repository secrets or the write token needed for a comment. The
@@ -105,11 +138,10 @@ bodies or hashes, tokens, secrets, or checkout-controlled query values to that U
 | Surface | Released version | Embedded Python artifact |
 | --- | --- | --- |
 | Local CLI | 0.1.2 | flowharness 0.1.2 |
-| Vibe Check Action | v1.0.1 | flowharness-ci-runner 0.1.1 |
+| Vibe Check Action | v1.1.0 | flowharness-ci-runner 0.3.0 |
 
-Vibe Check Action v1.0.1 embeds runner 0.1.1. The local released setup above uses
-FlowHarness/runner 0.1.2; it is a separately released local toolchain and does not change the
-Action's embedded runtime. Major Action tags make the example easy to adopt. Organizations that
+Vibe Check Action v1.1.0 embeds runner 0.3.0, the same runner as the local setup above. Every
+runner resolution uses an exact version pin and uv's `--no-config --no-sources` flags. Major Action tags make the example easy to adopt. Organizations that
 require immutable supply-chain inputs should replace `@v1` with the relevant immutable release
 commit SHA and SHA-pin every third-party Action according to their policy.
 
@@ -129,8 +161,8 @@ FlowHarness platform source available.
   summary and fixed notice instead.
 - **Upload is skipped.** An empty `FLOWHARNESS_TOKEN` disables upload; a token also requires a
   valid HTTPS `FLOWHARNESS_API_URL`.
-- **Versions differ.** The Action's embedded runner is 0.1.1, while the local released setup is
-  0.1.2; use the version matrix above to choose the surface you are debugging.
+- **SkillSpector fails closed.** If the SkillSpector step writes no report (for example, it cannot
+  install), the runner refuses the missing file and the job fails. Read the SkillSpector step log.
 
 For setup, read the [public Vibe Check guide](https://github.com/flowharness-ai/flowharness/blob/main/docs/vibe-check.md).
 For permissions, tokens, and data handling, read the [privacy guide](https://github.com/flowharness-ai/flowharness/blob/main/docs/privacy-permissions-and-tokens.md).
