@@ -13,7 +13,7 @@ commands from a Git repository with its agent-context files tracked. First initi
 configuration without generating another workflow or hook:
 
 ```console
-uvx --no-config --no-sources --from flowharness==0.1.2 \
+uvx --no-config --no-sources --from flowharness==0.3.0 \
   flowharness init --dir . --hook none --workflow none
 ```
 
@@ -137,13 +137,14 @@ bodies or hashes, tokens, secrets, or checkout-controlled query values to that U
 
 | Surface | Released version | Embedded Python artifact |
 | --- | --- | --- |
-| Local CLI | 0.1.2 | flowharness 0.1.2 |
+| Local CLI | 0.3.0 | flowharness 0.3.0 |
 | Vibe Check Action | v1.1.0 | flowharness-ci-runner 0.3.0 |
 
-Vibe Check Action v1.1.0 embeds runner 0.3.0, the same runner as the local setup above. Every
-runner resolution uses an exact version pin and uv's `--no-config --no-sources` flags. Major Action tags make the example easy to adopt. Organizations that
-require immutable supply-chain inputs should replace `@v1` with the relevant immutable release
-commit SHA and SHA-pin every third-party Action according to their policy.
+Vibe Check Action v1.1.0 embeds runner 0.3.0, the same release as the local setup above. Every
+runner resolution uses an exact version pin and uv's `--no-config --no-sources` flags. Major Action
+tags make the example easy to adopt. Organizations that require immutable supply-chain inputs
+should replace `@v1` with the relevant immutable release commit SHA and SHA-pin every third-party
+Action according to their policy.
 
 **Important:** This public repository is the reviewed release/export surface for the Vibe Check
 composite Action. Upstream development exports reviewed Action bytes here one-way; changes made in
